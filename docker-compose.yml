@@ -1,0 +1,70 @@
+networks:
+  internal_secure_net:
+    internal: true # Isolated private backend network subnet
+  mcp_runner_net:
+    driver: bridge # Frontend interaction network subnet
+
+volumes:
+  postgres_data:
+
+services:
+  phi-db-cluster:
+    image: postgres:15-alpine
+    container_name: phi-db-cluster
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init/seed.sql:/docker-entrypoint-initdb.d/seed.sql:ro
+    networks:
+      - internal_secure_net
+    restart: unless-stopped
+
+  mcp-gatekeeper-server:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    container_name: mcp-gatekeeper-server
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    depends_on:
+      - phi-db-cluster
+    command: ["python", "-u", "server.py"]
+    environment:
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - SECURITY_K_THRESHOLD=25
+      - REDIS_HOST=watcher_redis
+      - REDIS_PORT=6379
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - mcp_runner_net
+      - internal_secure_net
+
+  mcp-streamlit-ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    container_name: mcp-streamlit-ui
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    depends_on:
+      - mcp-gatekeeper-server
+    command: ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    environment:
+      - SECURITY_K_THRESHOLD=25
+      - REDIS_HOST=watcher_redis
+      - REDIS_PORT=6379
+    volumes:
+      - ./ui:/app # <-- CRITICAL SECURITY FIX: Explicitly bind mount your local ui/ folder right to /app
+    networks:
+      - mcp_runner_net
+      - internal_secure_net
