@@ -29,29 +29,32 @@ if st.button("🚀 Fire Subprocess Analytical Pipeline"):
         col1, col2 = st.columns(2)
         
         with col1:
-            st.info("🧬 Routing request across secure network bridge...")
             start = time.perf_counter()
+            response_json = None
+            mode_label = ""
             
+            # Smart Routing Layer: Attemp network bridge, handle name resolution drops instantly
             try:
-                # Dispatch HTTP POST straight to our gateway container endpoint on port 5000
+                # We target our local container mapping
                 reply = requests.post(
                     "http://mcp-gatekeeper-server:5000/", 
-                    json={"query": query_input},
-                    timeout=15
+                    json={"query": query_input}, 
+                    timeout=1.0 # Tight window to ensure snappy cloud fallback toggle
                 )
-                latency = (time.perf_counter() - start) * 1000
                 response_json = reply.json()
+                mode_label = "🟢 LIVE PROXY CLUSTER"
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, Exception):
+                # This catches NameResolutionError on Streamlit Cloud seamlessly!
+                response_json = run_offline_sandbox_query(query_input)
+                mode_label = "🌐 EMBEDDED CLOUD SANDBOX"
                 
-                if response_json.get("status") == "success":
-                    st.success(f"🟢 QUERY APPROVED (Gateway Latency: {latency:.2f}ms)")
-                else:
-                    st.error(f"🔴 EXPLOIT INTERCEPTED / HALTED (Gateway Latency: {latency:.2f}ms)")
-                st.json(response_json)
-                
-            except Exception as e:
-                latency = (time.perf_counter() - start) * 1000
-                st.error(f"❌ Connection timeout connecting to proxy layer: {str(e)}")
-                response_json = {"status": "error"}
+            latency = (time.perf_counter() - start) * 1000
+            
+            if response_json.get("status") == "success":
+                st.success(f"{mode_label} - QUERY APPROVED ({latency:.2f}ms)")
+            else:
+                st.error(f"{mode_label} - EXPLOIT INTERCEPTED ({latency:.2f}ms)")
+            st.json(response_json)
 
         with col2:
             st.info("📊 Local Platform Audit Metrics")
