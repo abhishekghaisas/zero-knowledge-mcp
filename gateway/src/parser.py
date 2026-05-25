@@ -1,128 +1,91 @@
-import os
-import json
+import math
+import random
+import re
+from typing import Dict, Any, Tuple
 import sqlglot
-from sqlglot import expressions
-import redis.asyncio as aioredis
+from sqlglot import exp
 
 class SecurityGateException(Exception):
-    """Custom exception routed directly to the audit log pipeline."""
+    """Custom exception raised when a query trips one of our zero-trust compliance gates."""
     pass
 
-class DefensiveParser:
-    def __init__(self, mandatory_k_threshold: int = 5, min_edit_distance: int = 12):
-        self.k_threshold = mandatory_k_threshold
-        self.min_edit_distance = min_edit_distance
+class PrivacyGuard:
+    def __init__(self):
+        # Base sensitive column patterns
+        self.blocked_identifiers = re.compile(
+            r'\b(ssn|social_security|national_id|passport|credit_card|cvv|password|hash|salt|secret)\b', 
+            re.IGNORECASE
+        )
 
-        #Connecting to sandboxed Redis container in network
-        self.redis_host = os.getenv("REDIS_HOST", "7-alpine")
-        self.redis_port = int(os.getenv("REDIS_PORT", 6379))
-        self.redis = aioredis.Redis(host=self.redis_host, port=self.redis_port, decode_responses=True)
+    def inject_laplace_noise(self, value: float, epsilon: float, sensitivity: float = 1.0) -> float:
+        """Mathematical Differential Privacy via Inverse Transform Sampling of the Laplace Distribution."""
+        if epsilon == float('inf') or not isinstance(value, (int, float)):
+            return value
+        
+        # Draw from standard uniform distribution
+        u = random.random() - 0.5
+        scale = sensitivity / epsilon
+        noise = -scale * math.copysign(1.0, u) * math.log(1.0 - 2.0 * abs(u))
+        
+        perturbed_value = value + noise
+        return int(round(perturbed_value)) if isinstance(value, int) else round(perturbed_value, 2)
 
-        self.forbidden_tokens = {
-            "drop", "insert", "update", "delete", "alter", "create", "truncate", "merge"
-        }
-        self.allowed_aggregates = {
-            "count", "avg", "sum", "min", "max", "stddev", "variance"
-        }
-
-    def _calculate_levenshtein(self, s1: str, s2: str) -> int:
-        """Computes the standard edit distance metrics between two strings."""
-        if len(s1) < len(s2):
-            return self._calculate_levenshtein(s2, s1)
-        if len(s2) == 0:
-            return len(s1)
-
-        previous_row = range(len(s2) + 1)
-        for i, c1 in enumerate(s1):
-            current_row = [i + 1]
-            for j, c2 in enumerate(s2):
-                insertions = previous_row[j + 1] + 1
-                deletions = current_row[j] + 1
-                substitutions = previous_row[j] + (c1 != c2)
-                current_row.append(min(insertions, deletions, substitutions))
-            previous_row = current_row
-
-        return previous_row[-1]
-
-    async def validate_query_async(self, client_id: str, sql_query: str) -> str:
+    def validate_and_process(self, sql_query: str, role: str = "researcher") -> Dict[str, Any]:
         """
-        Executes deep structural AST inspection across normalized query representations.
-        Enforces Differential Privacy rules by tracking consecutive query edits.
+        Enforces Gate 1 & 2 AST verification, while dynamically tuning 
+        privacy thresholds based on the user's role (Feature 2).
         """
-        normalized_query = " ".join(sql_query.strip().lower().split())
-        redis_key = f"mcp:history:{client_id}"
+        clean_query = sql_query.strip().rstrip(';')
 
-        past_queries = await self.redis.lrange(redis_key, 0, -1)
-
-        # --- RECURSIVE COUNTER-ATTACK: DIFFERENTIAL DISTANCE CHECK ---
-        for past_query in past_queries:
-            distance = self._calculate_levenshtein(normalized_query, past_query)
-            if 0 < distance < self.min_edit_distance:
-                raise SecurityGateException(
-                    f"Differential Privacy Shield Triggered: Input query structure exhibits an unsafe "
-                    f"similarity drift (Levenshtein Distance: {distance} < Threshold: {self.min_edit_distance}). "
-                    f"Sequential reconstruction attack vector suspected."
-                )
+        # --- FEATURE 2: RBAC MATRIX CONTROLS ---
+        if role == "compliance_officer":
+            k_threshold = 0
+            epsilon = float('inf')  # Unlimited privacy budget = Exact results for formal audits
+        elif role == "administrator":
+            k_threshold = 5
+            epsilon = 1.5           # High budget = Low distortion noise
+        else:  # Default restricted "researcher" status
+            k_threshold = 25
+            epsilon = 0.2           # Strict budget = Drastic Laplacian perturbation noise
 
         try:
-            # GATE 1: Multi-statement & Mutation Protections
-            parsed_statements = sqlglot.parse(sql_query, read="postgres")
-            if len(parsed_statements) > 1 or ";" in sql_query.strip().rstrip(";"):
-                raise SecurityGateException("Gate 1 Violation: Multi-statement execution detected.")
-            
+            parsed_statements = sqlglot.parse(clean_query)
+            if not parsed_statements or len(parsed_statements) > 1 or ";" in clean_query:
+                raise SecurityGateException("Gate 1 Failure: Blocked execution of compound multi-statement scripts.")
+
             expression = parsed_statements[0]
-            if not expression:
-                raise SecurityGateException("Gate 1 Violation: Evaluated AST is null or invalid.")
 
+            # --- GATE 1: Mutating Syntax & Token Blacklist Evaluation ---
             for node in expression.walk():
-                node_type = type(node).__name__.lower()
-                if any(forbidden in node_type for forbidden in self.forbidden_tokens):
-                    raise SecurityGateException("Gate 1 Violation: Write/Mutation command token detected.")
+                if isinstance(node, (exp.Drop, exp.Delete, exp.Update, exp.Insert, exp.Alter, exp.Truncate)):
+                    raise SecurityGateException(f"Gate 1 Failure: Blocked unsafe mutating token '{node.key.upper()}'.")
+                
+                # Check for explicit forbidden PII keywords
+                if isinstance(node, exp.Column) and self.blocked_identifiers.search(node.name):
+                    raise SecurityGateException(f"Gate 1 Failure: Blocked direct reference to protected high-risk asset '{node.name}'.")
 
-            # GATE 2: Deep Projection Enforcements
-            all_select_nodes = list(expression.find_all(expressions.Select))
-            if not all_select_nodes:
-                raise SecurityGateException("Gate 2 Violation: Command structure must contain a valid SELECT block.")
-
-            for select_node in all_select_nodes:
-                for projection in select_node.expressions:
-                    if isinstance(projection, expressions.Star):
-                        continue
-                        
-                    has_aggregate = False
-                    for child in projection.walk():
-                        if isinstance(child, expressions.Anonymous) and child.name.lower() in self.allowed_aggregates:
-                            has_aggregate = True
-                            break
-                        elif isinstance(child, expressions.Func) and child.sql_name().lower() in self.allowed_aggregates:
-                            has_aggregate = True
-                            break
-                            
-                    if not has_aggregate:
+            # --- GATE 2: Proportional Aggregation & Naked Column Interception ---
+            if isinstance(expression, exp.Select):
+                for projection in expression.expressions:
+                    # Look for unaggregated naked column selections
+                    has_aggregation = any(
+                        isinstance(p, (exp.Count, exp.Avg, exp.Sum, exp.Min, exp.Max)) 
+                        for p in projection.walk()
+                    )
+                    if not has_aggregation:
+                        cols = [c.name for c in projection.walk() if isinstance(c, exp.Column)]
+                        violating_target = cols[0] if cols else "unwrapped mathematical projection"
                         raise SecurityGateException(
-                            f"Gate 2 Violation: Naked expression '{projection}' exposed within statement block. "
-                            f"All projections must be wrapped in mathematical aggregate envelopes."
+                            f"Gate 2 Failure: Naked tracking expression '{violating_target}' detected. "
+                            f"Zero-Knowledge protocols mandate all columns must be evaluated inside aggregate envelopes."
                         )
-            
-            # Push query out to shared state list and trim window to last 5 entries
-            async with self.redis.pipeline(transaction=True) as pipe:
-                await(pipe.lpush(redis_key, normalized_query).ltrim(redis_key,0,4).expire(redis_key, 3600).execute())
-            return sql_query
 
-        except sqlglot.errors.ParseError as pe:
-            raise SecurityGateException(f"Gate 1 Violation: Malformed SQL structural parsing failed: {str(pe)}")
+            return {
+                "status": "APPROVED",
+                "sanitized_sql": clean_query,
+                "k_threshold": k_threshold,
+                "epsilon": epsilon
+            }
 
-    def enforce_k_anonymity(self, records: list) -> list:
-        sanitized_records = []
-        for row in records:
-            violates_k = False
-            for key, val in row.items():
-                if isinstance(val, int) and 0 < val < self.k_threshold:
-                    violates_k = True
-                    break
-            if violates_k:
-                redacted_row = {key: f"[REDACTED: COHORT SIZE < {self.k_threshold}]" for key in row.keys()}
-                sanitized_records.append(redacted_row)
-            else:
-                sanitized_records.append(row)
-        return sanitized_records
+        except sqlglot.errors.ParseError:
+            raise SecurityGateException("Gate 1 Failure: Abstract Syntax Tree validation failure. Malformed query layout.")

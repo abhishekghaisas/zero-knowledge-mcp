@@ -1,131 +1,86 @@
 import streamlit as st
 import requests
-import json
-import time
-import sqlite3
-import re
 
-st.set_page_config(page_title="Zero-Knowledge AI Governance", layout="wide")
+st.set_page_config(page_title="ZK AI Security Matrix", layout="wide", initial_sidebar_state="expanded")
 
-st.title("🛡️ Auditable Zero-Knowledge Data Retrieval Platform")
-st.markdown(
-    "**Model Context Protocol (MCP) Secure Analytics Gatekeeper.** "
-    "Simulate an LLM clinical agent querying live Patient Health Information (PHI). "
-    "Verify pre-execution AST validation firewalls and post-execution $k$-anonymity filters."
+st.title("🛡️ Zero-Knowledge Healthcare AI Governance Cluster")
+st.markdown("""
+    This playground demonstrates real-time **Aggressor-Defender simulations** within a healthcare setting.
+    An external LLM acting as a compromised **Aggressor Agent** tries to generate queries that leak 
+    Patient Health Information (PHI). The internal proxy acts as the **Defender**, evaluating the code 
+    using Abstract Syntax Trees (AST) and applying Differential Privacy constraints before any data leaves the network.
+""")
+
+# --- SIDEBAR ROLE SELECTOR (FEATURE 2) ---
+st.sidebar.header("🔑 Session Role Settings")
+selected_role = st.sidebar.selectbox(
+    "Active Authentication Context:",
+    ["researcher", "administrator", "compliance_officer"],
+    help="Adjusts backend firewall strictness parameters based on structural access rights."
 )
 
-# ---------------------------------------------------------
-# 🌐 OBLIGATORY OFFLINE SANDBOX ENGINE FOR STREAMLIT CLOUD
-# ---------------------------------------------------------
-def run_offline_sandbox_query(sql_query):
-    """Simulates our core 3-Gate Zero-Knowledge Pipeline inside an isolated SQLite instance."""
-    query_upper = sql_query.upper()
-    
-    # Gate 1: AST Token Traversal / DML-DDL Block simulation
-    destructive_tokens = ["DROP", "DELETE", "ALTER", "UPDATE", "INSERT", "TRUNCATE", ";"]
-    if any(token in query_upper for token in destructive_tokens if token != ";" or query_upper.count(";") > 1):
-        return {"status": "rejected", "reason": "AST Violation [Gate 1]: Destructive DML/DDL token or stacked command detected. Execution halted."}
-        
-    # Gate 2: Enforced Mathematical Aggregation simulation
-    if "SELECT" in query_upper and not any(agg in query_upper for agg in ["COUNT(", "AVG(", "SUM(", "MIN(", "MAX("]):
-        return {"status": "rejected", "reason": "Aggregation Defect [Gate 2]: Query projects raw structural data rows. 100% of targets must be wrapped in mathematical aggregates."}
+st.sidebar.markdown("---")
+st.sidebar.header("📊 Active Security Metrics Matrix")
+if selected_role == "researcher":
+    st.sidebar.error("❌ k-Anonymity Guard: Max (k=25)")
+    st.sidebar.error("⚡ DP Laplace Noise: Active (ε=0.2)")
+elif selected_role == "administrator":
+    st.sidebar.warning("⚠️ k-Anonymity Guard: Medium (k=5)")
+    st.sidebar.warning("⚡ DP Laplace Noise: Light (ε=1.5)")
+else:
+    st.sidebar.success("✅ k-Anonymity Guard: Off (k=0)")
+    st.sidebar.success("⚡ DP Laplace Noise: Disabled")
 
-    # Setup local in-memory SQLite database to mock the database cluster
-    conn = sqlite3.connect(":memory:")
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE patients_clinical_histories (
-            id INTEGER, zip_code TEXT, icd10_code TEXT, systolic_bp INTEGER
-        )
-    """)
-    # Seed a mini-cohort population matching our seeds
-    for i in range(105): cursor.execute("INSERT INTO patients_clinical_histories VALUES (?, '90210', 'E11.9', 120)", (i,))
-    for i in range(5): cursor.execute("INSERT INTO patients_clinical_histories VALUES (?, '30301', 'I10', 135)", (i+200,))
-    conn.commit()
+# --- SIMULATION MAP SELECTION PANEL ---
+st.subheader("🔴 Aggressor Agent Core Simulation Controllers")
+st.markdown("Choose a scenario to see if the defender can catch the security violation:")
 
-    try:
-        # Gate 3: Track Sequential Similarity (Mocking our Redis sliding window cache)
-        if "ST_STATE" not in st.session_state:
-            st.session_state["ST_STATE"] = []
-        
-        normalized_q = re.sub(r'\s+', ' ', sql_query).strip()
-        for past_q in st.session_state["ST_STATE"]:
-            if len(past_q) > 0 and abs(len(normalized_q) - len(past_q)) < 25 and "AND" in normalized_q:
-                return {"status": "rejected", "reason": "Differential Privacy Shield Triggered [Gate 3]: Unsafe similarity drift calculated. Sequential reconstruction attack vector blocked."}
-        
-        st.session_state["ST_STATE"].append(normalized_q)
-        
-        # Execute query safely across our sandbox layer
-        cursor.execute(sql_query)
-        columns = [desc[0] for desc in cursor.description]
-        rows = cursor.fetchall()
-        results = [dict(zip(columns, row)) for row in rows]
-        
-        # Enforce k-Anonymity Threshold Masking
-        for record in results:
-            for key, value in record.items():
-                if "COUNT" in key.upper() and isinstance(value, int) and value < 25:
-                    record[key] = "[REDACTED: COHORT SIZE < 25]"
-                    
-        return {"status": "success", "data": results}
-    except Exception as e:
-        return {"status": "error", "message": f"SQL Syntax Error: {str(e)}"}
-    finally:
-        conn.close()
-
-# ---------------------------------------------------------
-#🕹️ INTERFACE SIDEBAR & PRESENTATION LAYERPANEL
-# ---------------------------------------------------------
-st.sidebar.header("🕹️ Quick-Load Attack Scenarios")
 scenarios = {
-    "Compliant Analytical Query": "SELECT COUNT(id) as patients_count, AVG(systolic_bp) as avg_sys FROM patients_clinical_histories WHERE zip_code = '90210'",
-    "Stacked DML Injection (Gate 1)": "SELECT COUNT(id) FROM patients_clinical_histories; DROP TABLE patients_clinical_histories;",
-    "Exfiltration Via Naked Group (Gate 2)": "SELECT zip_code, systolic_bp FROM patients_clinical_histories",
-    "Micro-Cohort Re-identification (Gate 3)": "SELECT COUNT(id) as cohort_size FROM patients_clinical_histories WHERE zip_code = '90210' AND icd10_code = 'E11.9'"
+    "💥 Stacked SQL Injection (Bypass via Semicolon Break)": "stacked_injection",
+    "🗑️ Destructive Direct Mutation Payload (Data Wiping)": "malicious_mutation",
+    "👁️ Naked Information Gathering Probe (No Privacy Envelope)": "naked_leak",
+    "🔍 Micro-Cohort Attack Vector (Inference Exfiltration)": "micro_cohort_exfil",
+    "✅ Compliant Analytical Query (Safe Research Request)": "compliant_analytics"
 }
 
-chosen_scenario = st.sidebar.selectbox("Select a benchmark scenario to test:", list(scenarios.keys()))
-query_input = st.text_area("SQL Query Input String:", value=scenarios[chosen_scenario], height=120)
+chosen_label = st.selectbox("Select Adversarial Attack Configuration Blueprint:", list(scenarios.keys()))
+scenario_id = scenarios[chosen_label]
 
-if st.button("🚀 Fire Subprocess Analytical Pipeline"):
-    if query_input:
-        st.subheader("⚡ Live Transaction Telemetry Stream")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            start = time.perf_counter()
-            response_json = None
-            mode_label = ""
+st.markdown("---")
+st.subheader("🟢 Local Defender Interception Log Terminal")
+
+if st.button("⚡ Fire Attack Generation Pipeline", use_container_width=True):
+    with st.spinner("Processing zero-trust node isolation telemetry..."):
+        try:
+            # Safe communication with the gateway backend via serialization payloads
+            backend_url = "http://localhost:8000/simulate"
+            payload = {"scenario": scenario_id, "role": selected_role}
             
-            # Smart Adaptive Routing Layer
-            try:
-                reply = requests.post(
-                    "http://mcp-gatekeeper-server:5000/", 
-                    json={"query": query_input}, 
-                    timeout=1.0
-                )
-                response_json = reply.json()
-                mode_label = "🟢 LIVE PROXY CLUSTER"
-            except Exception:
-                # Triggers on Streamlit Cloud to fall back seamlessly
-                response_json = run_offline_sandbox_query(query_input)
-                mode_label = "🌐 EMBEDDED CLOUD SANDBOX"
-                
-            latency = (time.perf_counter() - start) * 1000
+            response = requests.post(backend_url, json=payload, timeout=5)
+            res_data = response.json()
             
-            if response_json.get("status") == "success":
-                st.success(f"{mode_label} - QUERY APPROVED ({latency:.2f}ms)")
+            # 1. Output what the backend engine caught the simulated agent doing
+            st.info(f"🔮 **Agent Generated Query String:** `{res_data.get('agent_payload')}`")
+            
+            # 2. Render validation telemetry results
+            if res_data.get("status") == "rejected":
+                st.error("🚨 **Defender Action:** BLOCKED TRANSACTION")
+                st.markdown(f"**Reason for Block:** `{res_data.get('reason')}`")
             else:
-                st.error(f"{mode_label} - EXPLOIT INTERCEPTED ({latency:.2f}ms)")
-            st.json(response_json)
-
-        with col2:
-            st.info("📊 Local Platform Audit Metrics")
-            st.metric(label="Execution Turnaround Speed", value=f"{latency:.2f} ms")
-            
-            if response_json.get("status") == "success":
-                st.dataframe(response_json.get("data", []), use_container_width=True)
-            elif response_json.get("status") == "rejected":
-                st.warning(f"**Security Guardrail Reason:**\n`{response_json.get('reason')}`")
-    else:
-        st.warning("Please insert an analytical code string before starting.")
+                st.success("✅ **Defender Action:** APPROVED — SECURE DATA EGRESS")
+                
+                # Show differential privacy notice if applicable
+                if selected_role != "compliance_officer":
+                    st.info("💡 **Differential Privacy Notice:** Values have been perturbed using Laplacian noise to prevent identity tracking.")
+                
+                st.markdown("#### Returned Target Row Results Data:")
+                st.json(res_data.get("data"))
+                
+        except requests.exceptions.ConnectionError:
+            st.error("❌ Link Refused: Ensure your backend service is running locally on port 8000.")
+else:
+    st.markdown("""
+        <div style="background-color:#1e293b; padding:20px; border-radius:8px; text-align:center; color:#94a3b8;">
+            Awaiting input sequence trigger. Select an attack blueprint configuration profile above.
+        </div>
+    """, unsafe_allow_html=True)

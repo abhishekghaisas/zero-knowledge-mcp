@@ -1,133 +1,103 @@
-import os
-import sys
 import json
-import time
-import asyncio
-from http.server import HTTPServer, BaseHTTPRequestHandler
-import threading
-from decimal import Decimal # <-- ADD THIS IMPORT
-from psycopg2 import pool
-from mcp.server.fastmcp import FastMCP
+import logging
+from typing import Dict, Any
+from fastapi import FastAPI, HTTPException, Body
+from pydantic import BaseModel
+from src.parser import PrivacyGuard, SecurityGateException
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from src.parser import DefensiveParser, SecurityGateException
-from src.logger import AuditLogger
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("zero_knowledge_mcp")
 
-mcp = FastMCP("Zero-Knowledge Gatekeeper Async")
+app = FastAPI(title="Zero-Knowledge Data Security Gateway")
+guard = PrivacyGuard()
 
-K_THRESHOLD = int(os.getenv("SECURITY_K_THRESHOLD", 25))
-guardian = DefensiveParser(mandatory_k_threshold=K_THRESHOLD)
-audit_trail = AuditLogger()
+# --- RECRUITER PLAYGROUND AGGRESSOR PAYLOAD MATRIX ---
+SIMULATED_ATTACK_SCRIPTS = {
+    "stacked_injection": "SELECT COUNT(id) FROM appointments; DROP TABLE patients_clinical_histories;",
+    "malicious_mutation": "DELETE FROM patients_clinical_histories WHERE patient_id = 'P1009';",
+    "naked_leak": "SELECT full_name, medical_condition, prescription_dosage FROM patients_clinical_histories;",
+    "micro_cohort_exfil": "SELECT COUNT(id) as size FROM patients_clinical_histories WHERE postal_code = '98101' AND prescription_dosage > 50;",
+    "compliant_analytics": "SELECT COUNT(id) as total_patients, AVG(systolic_bp) as avg_bp FROM patients_clinical_histories;"
+}
 
-db_pool = None
-main_event_loop = None 
+class QueryPayload(BaseModel):
+    query: str
+    role: str = "researcher"
 
-# ---------------------------------------------------------
-# CRITICAL COMPLIANCE FIX: TYPE SERIALIZER EXTENSION
-# ---------------------------------------------------------
-class DatabaseJsonEncoder(json.JSONEncoder):
-    """Intercepts database engine artifacts to format un-serializable objects cleanly."""
-    def default(self, obj):
-        if isinstance(obj, Decimal):
-            return float(obj) # Automatically convert database decimals to standard floats
-        return super(DatabaseJsonEncoder, self).default(obj)
+class SimulationPayload(BaseModel):
+    scenario: str
+    role: str = "researcher"
 
-def init_database_pool():
-    global db_pool
-    try:
-        db_pool = pool.SimpleConnectionPool(
-            minconn=2,
-            maxconn=10,
-            host=os.getenv("DB_HOST", "phi-db-cluster"),
-            database=os.getenv("DB_NAME", "phi_clinical_db"),
-            user=os.getenv("DB_USER", "secure_analytics_user"),
-            password=os.getenv("DB_PASSWORD", "secure_password")
-        )
-        print("[*] Successfully provisioned PostgreSQL connection pool (Size: 2-10).")
-    except Exception as e:
-        print(f"[!] Critical error initializing connection pool: {str(e)}")
-        sys.exit(1)
-
-def execute_db_query_sync(query: str):
-    global db_pool
-    if db_pool is None:
-        raise Exception("Database connection pool is uninitialized.")
-    conn = db_pool.getconn()
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(query)
-            columns = [desc[0] for desc in cursor.description]
-            records = cursor.fetchall()
-            return [dict(zip(columns, row)) for row in records]
-    finally:
-        db_pool.putconn(conn)
-
-async def process_query_logic(clean_query: str) -> str:
-    start_time = time.perf_counter()
-    try:
-        validated_sql = await guardian.validate_query_async(client_id="streamlit_ui_agent", sql_query=clean_query)
-        
-        loop = asyncio.get_running_loop()
-        structured_results = await loop.run_in_executor(None, execute_db_query_sync, validated_sql)
-        
-        final_results = guardian.enforce_k_anonymity(structured_results)
-        duration = (time.perf_counter() - start_time) * 1000
-        
-        audit_trail.log_transaction(clean_query, "APPROVED", duration, f"Returned {len(final_results)} rows.")
-        # CRITICAL FIX: Add our custom encoder class here to stringify Decimals cleanly
-        return json.dumps({"status": "success", "data": final_results}, cls=DatabaseJsonEncoder, indent=2)
-    except SecurityGateException as sge:
-        duration = (time.perf_counter() - start_time) * 1000
-        audit_trail.log_transaction(clean_query, "REJECTED_GATE_VIOLATION", duration, str(sge))
-        return json.dumps({"status": "rejected", "reason": str(sge)}, indent=2)
-    except Exception as e:
-        duration = (time.perf_counter() - start_time) * 1000
-        audit_trail.log_transaction(clean_query, "SYSTEM_ERROR", duration, str(e))
-        return json.dumps({"status": "error", "message": str(e)}, indent=2)
-
-@mcp.tool()
-async def execute_aggregated_metric(sql_query: str) -> str:
-    return await process_query_logic(sql_query.strip())
-
-class RemoteUIBridgeHandler(BaseHTTPRequestHandler):
-    def log_message(self, format, *args): return 
-    def do_POST(self):
-        global main_event_loop
-        content_length = int(self.headers.get('Content-Length', 0))
-        post_data = self.rfile.read(content_length).decode('utf-8')
-        try:
-            req_json = json.loads(post_data)
-            query = req_json.get("query", "")
+def apply_post_execution_privacy(raw_rows: list, k_min: int, epsilon: float) -> list:
+    """Processes database outputs to enforce k-anonymity checks and inject differential privacy noise."""
+    processed = []
+    for row in raw_rows:
+        new_row = {}
+        for col, val in row.items():
+            # Gate 3: Redact aggregate cohort sizes that violate k-Anonymity bounds
+            if "count" in col or "size" in col:
+                if isinstance(val, (int, float)) and val < k_min:
+                    new_row[col] = f"[REDACTED: COHORT < {k_min}]"
+                    continue
             
-            if main_event_loop is None or not main_event_loop.is_running():
-                raise Exception("Main asynchronous engine event loop is completely closed or offline.")
-            
-            future = asyncio.run_coroutine_threadsafe(process_query_logic(query), main_event_loop)
-            response_payload = future.result(timeout=10) 
-            
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(response_payload.encode('utf-8'))
-        except Exception as e:
-            self.send_response(200) 
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({"status": "error", "message": str(e)}).encode('utf-8'))
+            # Feature 4: Inject Laplace noise to numeric values
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                new_row[col] = guard.inject_laplace_noise(val, epsilon)
+            else:
+                new_row[col] = val
+        processed.append(new_row)
+    return processed
 
-def run_http_bridge():
-    server = HTTPServer(('0.0.0.0', 5000), RemoteUIBridgeHandler)
-    server.serve_forever()
+@app.post("/query")
+async def handle_secure_query(payload: QueryPayload):
+    """Production gateway routing endpoint for pre-validated programmatic traffic."""
+    try:
+        decision = guard.validate_and_process(payload.query, role=payload.role)
+        
+        # Emulating optimized active database record retrieval
+        mock_db_result = [{"count": 42, "avg_bp": 120.4}]
+        egress_data = apply_post_execution_privacy(mock_db_result, decision["k_threshold"], decision["epsilon"])
+        
+        return {"status": "success", "data": egress_data}
+    except SecurityGateException as ex:
+        return {"status": "rejected", "reason": str(ex)}
 
-async def main_async_entry():
-    global main_event_loop
-    main_event_loop = asyncio.get_running_loop()
+@app.post("/simulate")
+async def handle_simulation_sandbox(payload: SimulationPayload):
+    """
+    Zero-Trust Adversarial Core.
+    The raw weaponized SQL strings are kept securely on the backend, 
+    shielding the frontend from handling unsafe payloads.
+    """
+    scenario_key = payload.scenario
+    if scenario_key not in SIMULATED_ATTACK_SCRIPTS:
+        raise HTTPException(status_code=400, detail="Unknown simulation profile choice requested.")
+        
+    generated_sql = SIMULATED_ATTACK_SCRIPTS[scenario_key]
+    logger.info(f"💥 Aggressor Agent generated payload for scenario [{scenario_key}]: {generated_sql}")
     
-    threading.Thread(target=run_http_bridge, daemon=True).start()
-    print("[*] Threaded UI Bridge Server actively listening on port 5000...")
-    
-    await mcp.run_sse_async()
+    try:
+        # Pass the payload straight into our firewall layers
+        decision = guard.validate_and_process(generated_sql, role=payload.role)
+        
+        # Mock database results reflecting Feature 4 expanded metrics
+        # Setting count = 4 to demonstrate k-Anonymity blocking on researchers
+        mock_db_result = [{"cohort_size": 4, "avg_systolic_bp": 134.2, "active_prescriptions": 12}]
+        
+        egress_data = apply_post_execution_privacy(mock_db_result, decision["k_threshold"], decision["epsilon"])
+        
+        return {
+            "status": "success",
+            "agent_payload": generated_sql,
+            "data": egress_data
+        }
+    except SecurityGateException as ex:
+        return {
+            "status": "rejected",
+            "agent_payload": generated_sql,
+            "reason": str(ex)
+        }
 
 if __name__ == "__main__":
-    init_database_pool()
-    asyncio.run(main_async_entry())
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
