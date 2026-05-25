@@ -57,8 +57,13 @@ class PrivacyGuard:
 
             # --- GATE 1: Mutating Syntax & Token Blacklist Evaluation ---
             for node in expression.walk():
-                if isinstance(node, (exp.Drop, exp.Delete, exp.Update, exp.Insert, exp.Alter, exp.Truncate)):
+                # Corrected: Removed exp.Truncate and added exp.Command structural introspection
+                if isinstance(node, (exp.Drop, exp.Delete, exp.Update, exp.Insert, exp.Alter)):
                     raise SecurityGateException(f"Gate 1 Failure: Blocked unsafe mutating token '{node.key.upper()}'.")
+                
+                # Check for explicit TRUNCATE statements within generic command structures
+                if isinstance(node, exp.Command) and node.this.upper() == "TRUNCATE":
+                    raise SecurityGateException("Gate 1 Failure: Blocked unsafe mutating token 'TRUNCATE'.")
                 
                 # Check for explicit forbidden PII keywords
                 if isinstance(node, exp.Column) and self.blocked_identifiers.search(node.name):
