@@ -1,8 +1,57 @@
 import streamlit as st
-import requests
+import json
+import sys
+import os
+
+# Ensure local execution directory is appended to path to pull parser configurations
+sys.path.append(os.path.abspath(os.path.dirname(__file__)))
+
+# Direct Import of local modules to bypass network socket overhead on Streamlit Cloud
+from parser import PrivacyGuard, SecurityGateException
 
 st.set_page_config(page_title="ZK AI Security Matrix", layout="wide", initial_sidebar_state="expanded")
 
+# Initialize our core security engines directly into Streamlit cache state
+if "guard" not in st.session_state:
+    st.session_state.guard = PrivacyGuard()
+
+# --- RECRUITER PLAYGROUND AGGRESSOR PAYLOAD MATRIX (Brought to App Tier) ---
+SIMULATED_ATTACK_SCRIPTS = {
+    "💥 Stacked SQL Injection (Bypass via Semicolon Break)": "stacked_injection",
+    "🗑️ Destructive Direct Mutation Payload (Data Wiping)": "malicious_mutation",
+    "👁️ Naked Information Gathering Probe (No Privacy Envelope)": "naked_leak",
+    "🔍 Micro-Cohort Attack Vector (Inference Exfiltration)": "micro_cohort_exfil",
+    "✅ Compliant Analytical Query (Safe Research Request)": "compliant_analytics"
+}
+
+# Real-time asset script mapping values
+SQL_TARGET_SCRIPTS = {
+    "stacked_injection": "SELECT COUNT(id) FROM appointments; DROP TABLE patients_clinical_histories;",
+    "malicious_mutation": "DELETE FROM patients_clinical_histories WHERE patient_id = 'P1009';",
+    "naked_leak": "SELECT full_name, medical_condition, prescription_dosage FROM patients_clinical_histories;",
+    "micro_cohort_exfil": "SELECT COUNT(id) as size FROM patients_clinical_histories WHERE postal_code = '98101' AND prescription_dosage > 50;",
+    "compliant_analytics": "SELECT COUNT(id) as total_patients, AVG(systolic_bp) as avg_bp FROM patients_clinical_histories;"
+}
+
+def apply_post_execution_privacy(raw_rows: list, k_min: int, epsilon: float, guard_instance) -> list:
+    """Processes outputs to enforce k-anonymity checks and inject differential privacy noise."""
+    processed = []
+    for row in raw_rows:
+        new_row = {}
+        for col, val in row.items():
+            if "count" in col or "size" in col:
+                if isinstance(val, (int, float)) and val < k_min:
+                    new_row[col] = f"[REDACTED: COHORT < {k_min}]"
+                    continue
+            
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                new_row[col] = guard_instance.inject_laplace_noise(val, epsilon)
+            else:
+                new_row[col] = val
+        processed.append(new_row)
+    return processed
+
+# --- UI DESIGN RENDERING ---
 st.title("🛡️ Zero-Knowledge Healthcare AI Governance Cluster")
 st.markdown("""
     This playground demonstrates real-time **Aggressor-Defender simulations** within a healthcare setting.
@@ -35,49 +84,45 @@ else:
 st.subheader("🔴 Aggressor Agent Core Simulation Controllers")
 st.markdown("Choose a scenario to see if the defender can catch the security violation:")
 
-scenarios = {
-    "💥 Stacked SQL Injection (Bypass via Semicolon Break)": "stacked_injection",
-    "🗑️ Destructive Direct Mutation Payload (Data Wiping)": "malicious_mutation",
-    "👁️ Naked Information Gathering Probe (No Privacy Envelope)": "naked_leak",
-    "🔍 Micro-Cohort Attack Vector (Inference Exfiltration)": "micro_cohort_exfil",
-    "✅ Compliant Analytical Query (Safe Research Request)": "compliant_analytics"
-}
-
-chosen_label = st.selectbox("Select Adversarial Attack Configuration Blueprint:", list(scenarios.keys()))
-scenario_id = scenarios[chosen_label]
+chosen_label = st.selectbox("Select Adversarial Attack Configuration Blueprint:", list(SIMULATED_ATTACK_SCRIPTS.keys()))
+scenario_id = SIMULATED_ATTACK_SCRIPTS[chosen_label]
 
 st.markdown("---")
 st.subheader("🟢 Local Defender Interception Log Terminal")
 
-if st.button("⚡ Fire Attack Generation Pipeline", use_container_width=True):
+# Fixed: Replaced use_container_width=True with width='stretch' for 2026 specs
+if st.button("⚡ Fire Attack Generation Pipeline", width="stretch"):
     with st.spinner("Processing zero-trust node isolation telemetry..."):
+        
+        # Pull generated query internally within sandbox bounds
+        generated_sql = SQL_TARGET_SCRIPTS[scenario_id]
+        st.info(f"🔮 **Agent Generated Query String:** `{generated_sql}`")
+        
         try:
-            # Safe communication with the gateway backend via serialization payloads
-            backend_url = "http://localhost:8000/simulate"
-            payload = {"scenario": scenario_id, "role": selected_role}
+            # Direct module execution evaluation loop
+            decision = st.session_state.guard.validate_and_process(generated_sql, role=selected_role)
             
-            response = requests.post(backend_url, json=payload, timeout=5)
-            res_data = response.json()
+            # Simulated backend data extraction metrics
+            mock_db_result = [{"cohort_size": 4, "avg_systolic_bp": 134.2, "active_prescriptions": 12}]
             
-            # 1. Output what the backend engine caught the simulated agent doing
-            st.info(f"🔮 **Agent Generated Query String:** `{res_data.get('agent_payload')}`")
+            # Post-execution modifications applied seamlessly
+            egress_data = apply_post_execution_privacy(
+                mock_db_result, 
+                decision["k_threshold"], 
+                decision["epsilon"], 
+                st.session_state.guard
+            )
             
-            # 2. Render validation telemetry results
-            if res_data.get("status") == "rejected":
-                st.error("🚨 **Defender Action:** BLOCKED TRANSACTION")
-                st.markdown(f"**Reason for Block:** `{res_data.get('reason')}`")
-            else:
-                st.success("✅ **Defender Action:** APPROVED — SECURE DATA EGRESS")
-                
-                # Show differential privacy notice if applicable
-                if selected_role != "compliance_officer":
-                    st.info("💡 **Differential Privacy Notice:** Values have been perturbed using Laplacian noise to prevent identity tracking.")
-                
-                st.markdown("#### Returned Target Row Results Data:")
-                st.json(res_data.get("data"))
-                
-        except requests.exceptions.ConnectionError:
-            st.error("❌ Link Refused: Ensure your backend service is running locally on port 8000.")
+            st.success("✅ **Defender Action:** APPROVED — SECURE DATA EGRESS")
+            if selected_role != "compliance_officer":
+                st.info("💡 **Differential Privacy Notice:** Values have been perturbed using Laplacian noise to prevent identity tracking.")
+            
+            st.markdown("#### Returned Target Row Results Data:")
+            st.json(egress_data)
+            
+        except SecurityGateException as ex:
+            st.error("🚨 **Defender Action:** BLOCKED TRANSACTION")
+            st.markdown(f"**Reason for Block:** `{str(ex)}`")
 else:
     st.markdown("""
         <div style="background-color:#1e293b; padding:20px; border-radius:8px; text-align:center; color:#94a3b8;">
