@@ -7,7 +7,7 @@ import os
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
 # Direct Import of local modules to bypass network socket overhead on Streamlit Cloud
-from parser import PrivacyGuard, SecurityGateException
+from src.parser import PrivacyGuard, SecurityGateException
 
 st.set_page_config(page_title="ZK AI Security Matrix", layout="wide", initial_sidebar_state="expanded")
 
