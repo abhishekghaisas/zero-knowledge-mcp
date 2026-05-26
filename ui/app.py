@@ -68,7 +68,7 @@ else:
 
 st.markdown("""
     ### 🔴 Live Claude Aggressor vs. 🟢 Static AST Defender
-    This application orchestrates an active security playground using **Anthropic's Claude 3.5 Sonnet** engine. 
+    This application orchestrates an active security playground using **Anthropic's Claude 4.5 Haiku** engine. 
     Claude is system-prompted as a compromise-testing **Aggressor Agent**, synthesizing polymorphic SQL exploits 
     on the fly. The local **Defender Parser** evaluates the generated strings using **Abstract Syntax Trees (AST)**, 
     applying strict network gates and mathematical privacy filters before data egress.
