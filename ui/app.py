@@ -52,17 +52,20 @@ ctx_component = st.components.v1.html(storage_bridge_html, height=0, width=0)
 
 # Hydrate the True Master Baseline Time directly from the browser window's state
 if ctx_component is not None:
-    st.session_state.session_start_time = float(ctx_component)
+    try:
+        st.session_state.session_start_time = float(ctx_component)
+    except (ValueError, TypeError):
+        st.session_state.session_start_time = time.time()
+else:
+    # If the browser local storage hasn't reported back yet, use current time as a fallback baseline
+    if st.session_state.session_start_time is None:
+        st.session_state.session_start_time = time.time()
 
 # --- CALCULATE REALTIME ENFORCEMENT WINDOWS ---
 ALLOWED_SESSION_DURATION = 420 # 7 minutes total budget allocation
 
-if st.session_state.session_start_time is not None:
-    elapsed_seconds = time.time() - st.session_state.session_start_time
-    remaining_time = max(0, ALLOWED_SESSION_DURATION - int(elapsed_seconds))
-else:
-    # Safe conservative fallback state calculation during initial component handshakes
-    remaining_time = ALLOWED_SESSION_DURATION
+elapsed_seconds = time.time() - st.session_state.session_start_time
+remaining_time = max(0, ALLOWED_SESSION_DURATION - int(elapsed_seconds))
 
 remaining_minutes = remaining_time // 60
 remaining_seconds = remaining_time % 60
