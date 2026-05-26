@@ -168,7 +168,7 @@ def call_claud_aggressor_agent(scenario_prompt: str) -> str:
     )
     try:
         response = client.messages.create(
-            model="claude-3-5-sonnet-latest",
+            model="claude-haiku-4-5-20251001",
             max_tokens=300,
             temperature=0.3, 
             system=system_instruction,
