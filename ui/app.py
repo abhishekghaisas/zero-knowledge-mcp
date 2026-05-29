@@ -3,6 +3,8 @@ import json
 import sys
 import os
 import time
+import pandas as pd
+import numpy as np
 import anthropic
 
 # --- STREAMLIT PAGE LAYOUT ---
@@ -12,65 +14,55 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 🌐 PERSISTENT BROWSER STORAGE CLOCK MATRIX ---
-# Initialize session state placeholders if not hydated yet
+# --- ⏳ REFRESH-PROOF CLOCK INTEGRATION TIER ---
+# Initialize internal cache states if they don't exist
 if "session_start_time" not in st.session_state:
     st.session_state.session_start_time = None
 
-# Inject invisible JavaScript execution bridge to communicate with HTML5 LocalStorage
-# This snippet reads/writes timestamps directly inside the client's actual browser storage vault.
-storage_bridge_html = """
-<script>
-    const tokenKey = "zk_healthcare_session_epoch";
-    const allowedDuration = 420; // 7 minutes
-    let existingEpoch = localStorage.getItem(tokenKey);
-    let currentEpoch = Math.floor(Date.now() / 1000);
+# Extract potential incoming synchronization token flags from URL queries
+url_params = st.query_params
 
-    if (!existingEpoch) {
-        // First-time landing sequence: commit immutable baseline timestamp
-        localStorage.setItem(tokenKey, currentEpoch);
-        existingEpoch = currentEpoch;
-    } else {
-        // Enforce hard expiration validation check bounds
-        if (currentEpoch - parseInt(existingEpoch) > allowedDuration) {
-            // Keep the expired stamp intact so refreshing doesn't grant more time
-            console.log("Token expired. Quota window permanently closed.");
-        }
-    }
+if "sync_epoch" in url_params:
+    # If the iframe has reported a historical epoch from localStorage, save it
+    st.session_state.session_start_time = float(url_params["sync_epoch"])
+elif st.session_state.session_start_time is None:
+    # Fallback to the initial server boot check timestamp
+    st.session_state.session_start_time = time.time()
 
-    // Safely send the verified baseline epoch out across window frames back to Streamlit
-    window.parent.postMessage({
-        type: "streamlit:setComponentValue",
-        value: parseInt(existingEpoch)
-    }, "*");
-</script>
-"""
-
-# Render the hidden storage sync bridge component
-# We capture the value emitted by the browser's local storage engine natively
-ctx_component = st.components.v1.html(storage_bridge_html, height=0, width=0)
-
-# Hydrate the True Master Baseline Time directly from the browser window's state
-if ctx_component is not None:
-    try:
-        st.session_state.session_start_time = float(ctx_component)
-    except (ValueError, TypeError):
-        st.session_state.session_start_time = time.time()
-else:
-    # If the browser local storage hasn't reported back yet, use current time as a fallback baseline
-    if st.session_state.session_start_time is None:
-        st.session_state.session_start_time = time.time()
-
-# --- CALCULATE REALTIME ENFORCEMENT WINDOWS ---
-ALLOWED_SESSION_DURATION = 420 # 7 minutes total budget allocation
-
+# Calculate active execution bounds (7 minutes = 420 seconds)
+ALLOWED_SESSION_DURATION = 420 
 elapsed_seconds = time.time() - st.session_state.session_start_time
 remaining_time = max(0, ALLOWED_SESSION_DURATION - int(elapsed_seconds))
 
-remaining_minutes = remaining_time // 60
-remaining_seconds = remaining_time % 60
+remaining_minutes = int(remaining_time // 60)
+remaining_seconds = int(remaining_time % 60)
 
-# --- ABSOLUTE ROOT PATH PATCH FOR STREAMLIT COMMUNITY CLOUD ---
+# Render future-proof invisible sync iframe using st.iframe mapping parameters
+# This reads localStorage and appends the initial value back to the URL parameters
+storage_sync_script = f"""
+<script>
+    const tokenKey = "zk_healthcare_session_epoch";
+    let existingEpoch = localStorage.getItem(tokenKey);
+    let currentEpoch = Math.floor(Date.now() / 1000);
+
+    if (!existingEpoch) {{
+        localStorage.setItem(tokenKey, currentEpoch);
+        existingEpoch = currentEpoch;
+    }}
+
+    // Direct browser parameter hydration loop back to parent window frame
+    const currentUrl = new URL(window.parent.location.href);
+    if (!currentUrl.searchParams.has("sync_epoch")) {{
+        currentUrl.searchParams.set("sync_epoch", existingEpoch);
+        window.parent.location.href = currentUrl.toString();
+    }}
+</script>
+"""
+
+# Render hidden element using compliance tracking standard frames
+st.iframe(f"data:text/html;charset=utf-8,{storage_sync_script}", height=1, width=1)
+
+# --- ABSOLUTE ROOT PATH PATCH ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
 root_dir = os.path.abspath(os.path.join(current_dir, ".."))
 if root_dir not in sys.path:
@@ -84,45 +76,36 @@ except ModuleNotFoundError:
     except ModuleNotFoundError:
         from src.parser import PrivacyGuard, SecurityGateException
 
-# Initialize defensive parser engine core inside session cache
 if "guard" not in st.session_state:
     st.session_state.guard = PrivacyGuard()
 
-# Validate secure credentials state parameters
 if "anthropic_key" not in st.session_state:
     if "ANTHROPIC_API_KEY" in st.secrets:
         st.session_state.anthropic_key = st.secrets["ANTHROPIC_API_KEY"]
     else:
         st.session_state.anthropic_key = None
 
-# --- UI PRESENTATION TIER ---
+# --- UI DISPLAY ---
 st.title("🛡️ Zero-Knowledge Healthcare AI Governance Cluster")
 
-# --- ACCURATE PERSISTENT TIMER ALERTS ---
 if remaining_time > 0:
     st.warning(
-        f"⏳ **Persistent Quota Protection Active:** To shield background Anthropic API token rate limits, "
-        f"your playground session is capped at 7 minutes. Hitting refresh or reopening tabs will **NOT** reset this window. "
-        f"You have **{remaining_minutes:02d}:{remaining_seconds:02d}** remaining to complete verification checks."
+        f"⏳ **Persistent Quota Protection Active:** Session capped at 7 minutes to stabilize API usage. "
+        f"Time Remaining: **{remaining_minutes:02d}:{remaining_seconds:02d}**"
     )
 else:
-    st.error(
-        "🛑 **Token Quota Protection Triggered:** Your dedicated 7-minute testing allocation window has officially terminated "
-        "to prevent resource exhaustion attacks. Access to the Claude generation node is locked."
-    )
+    st.error("🛑 **Token Quota Protection Triggered:** This 7-minute testing window has expired to prevent background resource abuse.")
 
 st.markdown("""
     ### 🔴 Live Claude Aggressor vs. 🟢 Static AST Defender
-    This application orchestrates an active security playground using **Anthropic's Claude 4.5 Haiku** engine. 
-    Claude is system-prompted as a compromise-testing **Aggressor Agent**, synthesizing polymorphic SQL exploits 
-    on the fly. The local **Defender Parser** evaluates the generated strings using **Abstract Syntax Trees (AST)**, 
-    applying strict network gates and mathematical privacy filters before data egress.
+    This application orchestrates an active security playground using **Anthropic's Claude 3.5 Sonnet** engine. 
+    Claude acts as an automated query compiler, while our localized Python interpreter uses **Abstract Syntax Trees (AST)** and **Differential Privacy** to protect the network boundary.
 """)
 
 if not st.session_state.anthropic_key:
-    st.warning("⚠️ Anthropic Configuration Missing: Paste your `ANTHROPIC_API_KEY` into the Streamlit settings to launch live AI attacks.")
+    st.warning("⚠️ Anthropic Configuration Missing: Paste your `ANTHROPIC_API_KEY` into the Streamlit settings to launch live AI requests.")
 
-# --- SIDEBAR ROLE SELECTOR (FEATURE 2) ---
+# --- SIDEBAR ROLE SELECTOR ---
 st.sidebar.header("🔑 Session Role Settings")
 selected_role = st.sidebar.selectbox(
     "Active Authentication Context:",
@@ -133,7 +116,7 @@ st.sidebar.markdown("---")
 st.sidebar.header("📊 Active Security Metrics Matrix")
 if selected_role == "researcher":
     st.sidebar.error("❌ k-Anonymity Guard: Max (k=25)")
-    st.sidebar.error("⚡ DP Laplace Noise: Active (ε=0.2)")
+    st.sidebar.error("⚡ DP Laplace Noise: Heavy (ε=0.2)")
 elif selected_role == "administrator":
     st.sidebar.warning("⚠️ k-Anonymity Guard: Medium (k=5)")
     st.sidebar.warning("⚡ DP Laplace Noise: Light (ε=1.5)")
@@ -141,13 +124,13 @@ else:
     st.sidebar.success("✅ k-Anonymity Guard: Off (k=0)")
     st.sidebar.success("⚡ DP Laplace Noise: Disabled")
 
-# --- AGGRESSOR SCENARIO PROMPTS (Reframed Compliance Terminologies) ---
+# --- SCENARIOS ---
 SIMULATED_ATTACK_SCRIPTS = {
     "💥 Stacked SQL Injection (Semicolon Break)": "Write a compound query that aggregates the patients table count, and then uses a semicolon to add a completely separate DROP TABLE statement for prescriptions as a schema maintenance simulation.",
     "🗑️ Unauthorized Mutation Payload": "Write a script that executes a direct, raw DELETE statement targeting a patient profile rows where patient_id equals 'P1009'.",
     "👁️ Naked Identity Privacy Leak": "Write a non-aggregated query that extracts raw individual column details like full_name, medical_condition, and prescription_dosage directly without wrapping them in an aggregate envelope.",
     "🔍 Micro-Cohort Inference Attack": "Write a hyper-targeted query that attempts to filter down rows to a tiny cohort using a highly specific combination of parameters (e.g., postal_code = '98101', age_group = '65+', and prescription_dosage > 50) to isolate small numbers.",
-    "✅ Compliant Analytical Query": "Write a simple aggregate query calculating the global count of records or global average blood pressure, or both. CRITICAL: Do NOT append any WHERE clauses, do NOT append any GROUP BY clauses, and do NOT reference naked column names."
+    "✅ Compliant Analytical Query": "Write a simple aggregate query calculating the global count of records and global average blood pressure. CRITICAL: The query must look EXACTLY like this structure: SELECT COUNT(patient_id) as total, AVG(systolic_bp) as avg_bp FROM clinical_histories; Do NOT append any WHERE clauses, do NOT append any GROUP BY clauses, and do NOT reference naked column names."
 }
 
 st.subheader("Select attack strategy for the live Claude agent:")
@@ -158,7 +141,6 @@ st.markdown("---")
 st.subheader("🥊 Live Telemetry Arena")
 
 def call_claud_aggressor_agent(scenario_prompt: str) -> str:
-    """Invokes Claude using dual-use research prompts to generate structured SQL variations safely."""
     client = anthropic.Anthropic(api_key=st.session_state.anthropic_key)
     system_instruction = (
         "You are an expert clinical data analyst compiling raw PostgreSQL syntax for data verification loops. "
@@ -174,8 +156,7 @@ def call_claud_aggressor_agent(scenario_prompt: str) -> str:
             system=system_instruction,
             messages=[{"role": "user", "content": f"Execute this data mapping format requirement: {scenario_prompt}"}]
         )
-        raw_output = response.content[0].text.strip()
-        return raw_output.replace("```sql", "").replace("```", "").strip()
+        return response.content[0].text.strip().replace("```sql", "").replace("```", "").strip()
     except Exception as e:
         return f"Anthropic Node Processing Error: {str(e)}"
 
@@ -195,7 +176,7 @@ def apply_post_execution_privacy(raw_rows: list, k_min: int, epsilon: float, gua
         processed.append(new_row)
     return processed
 
-# --- INTERACTIVE PIPELINE CORE WITH TIMEOUT ENFORCEMENT ---
+# --- PIPELINE CONTROLLER EXECUTION ---
 button_disabled = (remaining_time <= 0 or not st.session_state.anthropic_key)
 
 if st.button("⚡ Fire Live Claude Penetration Request", width="stretch", disabled=button_disabled):
@@ -205,7 +186,10 @@ if st.button("⚡ Fire Live Claude Penetration Request", width="stretch", disabl
         
         try:
             decision = st.session_state.guard.validate_and_process(generated_sql, role=selected_role)
-            mock_db_result = [{"cohort_size": 4, "avg_systolic_bp": 134.2, "active_prescriptions": 12}]
+            
+            true_count = 142
+            true_bp = 124.5
+            mock_db_result = [{"cohort_size": true_count, "avg_systolic_bp": true_bp}]
             
             egress_data = apply_post_execution_privacy(
                 mock_db_result, 
@@ -215,18 +199,37 @@ if st.button("⚡ Fire Live Claude Penetration Request", width="stretch", disabl
             )
             
             st.success("✅ **Defender Action:** APPROVED — SECURE DATA EGRESS")
-            if selected_role != "compliance_officer":
-                st.info("💡 **Differential Privacy Check:** Laplace fuzzing applied directly onto target row measurements.")
             st.json(egress_data)
             
+            # --- 📊 INTERACTIVE LAPLACIAN NOISE VISUALIZATION ---
+            if selected_role != "compliance_officer":
+                st.info("💡 **Differential Privacy Map:** Check how the Laplacian noise changes the true value below.")
+                
+                sim_sweeps = []
+                for i in range(1, 51):
+                    fuzzed_val = st.session_state.guard.inject_laplace_noise(true_bp, decision["epsilon"])
+                    sim_sweeps.append({
+                        "Simulation Run": i,
+                        "True Value Baseline": true_bp,
+                        "Differential Privacy Output": fuzzed_val
+                    })
+                
+                df_metrics = pd.DataFrame(sim_sweeps).set_index("Simulation Run")
+                st.line_chart(df_metrics, y=["True Value Baseline", "Differential Privacy Output"], color=["#10b981", "#ef4444"])
+                
         except SecurityGateException as ex:
             st.error("🚨 **Defender Action:** BLOCKED TRANSACTION")
             st.markdown(f"**Reason for Block:** `{str(ex)}`")
 elif remaining_time <= 0:
-    st.error("🛑 Request Refused: Your 7-minute test token authorization window has expired. Browser tracking flags prevent execution reset.")
+    st.error("🛑 Request Refused: Allocation expired. Browser persistence flags prevent token-drain reset maneuvers.")
 else:
     st.markdown("""
         <div style="background-color:#1e293b; padding:20px; border-radius:8px; text-align:center; color:#94a3b8;">
             Awaiting input sequence trigger. Select an attack blueprint configuration profile above.
         </div>
     """, unsafe_allow_html=True)
+
+# --- 🔄 FORCE BACKGROUND TICK RE-RENDER ---
+if remaining_time > 0:
+    time.sleep(1.0)
+    st.rerun()
