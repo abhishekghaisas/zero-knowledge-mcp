@@ -98,7 +98,7 @@ else:
 
 st.markdown("""
     ### 🔴 Live Claude Aggressor vs. 🟢 Static AST Defender
-    This application orchestrates an active security playground using **Anthropic's Claude 3.5 Sonnet** engine. 
+    This application orchestrates an active security playground using **Anthropic's Claude 4.5 Haiku** engine. 
     Claude acts as an automated query compiler, while our localized Python interpreter uses **Abstract Syntax Trees (AST)** and **Differential Privacy** to protect the network boundary.
 """)
 
