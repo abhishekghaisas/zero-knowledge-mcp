@@ -381,7 +381,7 @@ Differential Privacy Map:
 
 ## 📸 Screenshots
 
-### Main Interface: Red Team vs. Blue Team
+### Main Interface: Red Team vs. Green Team
 ![ZK AI Interface](screenshots/zk-ai-interface.png)
 *Live adversarial testing playground with k-anonymity and differential privacy controls*
 
